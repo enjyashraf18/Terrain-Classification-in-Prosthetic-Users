@@ -1,0 +1,176 @@
+{
+  "overall": {
+    "accuracy": 0.5606420255453826,
+    "balanced_acc": 0.53470328402757,
+    "macro_f1": 0.5339568358648414,
+    "weighted_f1": 0.5466452304078929
+  },
+  "per_class": {
+    "Flat": {
+      "precision": 0.5609586662035428,
+      "recall": 0.7046247818499127,
+      "f1": 0.6246374008895765,
+      "support": 2292
+    },
+    "Grass": {
+      "precision": 0.34421364985163205,
+      "recall": 0.24191866527632952,
+      "f1": 0.28413962033067974,
+      "support": 959
+    },
+    "Stairs": {
+      "precision": 0.675759454432734,
+      "recall": 0.8270106221547799,
+      "f1": 0.7437734561583077,
+      "support": 1318
+    },
+    "Slope Ascent": {
+      "precision": 0.5668016194331984,
+      "recall": 0.45161290322580644,
+      "f1": 0.5026929982046678,
+      "support": 930
+    },
+    "Slope Descent": {
+      "precision": 0.5,
+      "recall": 0.6021194605009634,
+      "f1": 0.5463286713286714,
+      "support": 1038
+    },
+    "Gravel": {
+      "precision": 0.4635149023638232,
+      "recall": 0.31472435450104674,
+      "f1": 0.37489609310058186,
+      "support": 1433
+    },
+    "Uneven Terrain": {
+      "precision": 0.7350069735006973,
+      "recall": 0.6009122006841505,
+      "f1": 0.6612296110414053,
+      "support": 877
+    }
+  },
+  "cv_folds": [
+    {
+      "fold": 1,
+      "n_test": 1036,
+      "accuracy": 0.5772200772200772,
+      "balanced_acc": 0.5239525409585067,
+      "macro_f1": 0.511093422473689,
+      "weighted_f1": 0.5478469035790567
+    },
+    {
+      "fold": 2,
+      "n_test": 855,
+      "accuracy": 0.5450292397660819,
+      "balanced_acc": 0.5461433015145116,
+      "macro_f1": 0.5184976430625601,
+      "weighted_f1": 0.5242393289542727
+    },
+    {
+      "fold": 3,
+      "n_test": 1115,
+      "accuracy": 0.43318385650224217,
+      "balanced_acc": 0.4016087773889215,
+      "macro_f1": 0.367462952889583,
+      "weighted_f1": 0.38852046731261963
+    },
+    {
+      "fold": 4,
+      "n_test": 871,
+      "accuracy": 0.5625717566016073,
+      "balanced_acc": 0.5686716629039233,
+      "macro_f1": 0.5222631772385025,
+      "weighted_f1": 0.48381126630642646
+    },
+    {
+      "fold": 5,
+      "n_test": 808,
+      "accuracy": 0.6757425742574258,
+      "balanced_acc": 0.6349733353798503,
+      "macro_f1": 0.6236692905033457,
+      "weighted_f1": 0.6851419379315768
+    },
+    {
+      "fold": 6,
+      "n_test": 873,
+      "accuracy": 0.4845360824742268,
+      "balanced_acc": 0.49118728632536207,
+      "macro_f1": 0.4750539136950406,
+      "weighted_f1": 0.4881394363720964
+    },
+    {
+      "fold": 7,
+      "n_test": 893,
+      "accuracy": 0.5576707726763718,
+      "balanced_acc": 0.5153179836379858,
+      "macro_f1": 0.5231860016939028,
+      "weighted_f1": 0.5361708238398951
+    },
+    {
+      "fold": 8,
+      "n_test": 790,
+      "accuracy": 0.5924050632911393,
+      "balanced_acc": 0.5907318125713795,
+      "macro_f1": 0.5259346436928813,
+      "weighted_f1": 0.5427181388333412
+    },
+    {
+      "fold": 9,
+      "n_test": 794,
+      "accuracy": 0.672544080604534,
+      "balanced_acc": 0.6554365836129529,
+      "macro_f1": 0.6525287153931438,
+      "weighted_f1": 0.662770630114835
+    },
+    {
+      "fold": 10,
+      "n_test": 812,
+      "accuracy": 0.5591133004926109,
+      "balanced_acc": 0.5678490621510018,
+      "macro_f1": 0.5190646350354274,
+      "weighted_f1": 0.5297832349348897
+    }
+  ],
+  "top10_features_gain": [
+    {
+      "feature_name": "OH__FreeAcc_N__energy",
+      "importance": 127.1748046875
+    },
+    {
+      "feature_name": "PS__Gyr_MAG__mean",
+      "importance": 53.15885543823242
+    },
+    {
+      "feature_name": "PS__Gyr_MAG__p10",
+      "importance": 43.07136917114258
+    },
+    {
+      "feature_name": "OS__Acc_Z__dom_freq",
+      "importance": 29.69353485107422
+    },
+    {
+      "feature_name": "OS__Acc_Z__rms",
+      "importance": 25.500551223754883
+    },
+    {
+      "feature_name": "OS__Acc_MAG__median",
+      "importance": 20.288711547851562
+    },
+    {
+      "feature_name": "TR__Acc_Z__energy",
+      "importance": 19.84166145324707
+    },
+    {
+      "feature_name": "OH__Gyr_Z__spec_entropy",
+      "importance": 19.68874168395996
+    },
+    {
+      "feature_name": "TR__Acc_Z__max",
+      "importance": 18.720155715942383
+    },
+    {
+      "feature_name": "PS__FreeAcc_U__spec_entropy",
+      "importance": 18.21831703186035
+    }
+  ]
+}
