@@ -1,30 +1,41 @@
-import pickle, json
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+import msvcrt
+import os
+import glob
 from pathlib import Path
+import pickle, json, socket, time
 from scipy.signal import butter, filtfilt
 from scipy.stats import skew, kurtosis, iqr
-from scipy.fft import rfft, rfftfreq
+from scipy.fft import rfft, rfftfreq 
 
+# =========== Chunk Looping ======================
 current_dir = Path(__file__).parent
-clf = xgb.XGBClassifier()
-clf.load_model("terrain_model.ubj")
+data_folder = current_dir / "dataverse_files" / "P3"
+all_files = sorted(list(data_folder.glob("*.csv")))
 
-with open(current_dir/ "preprocessor.pkl", "rb") as f:
+def chunk_list(lst, chunk_size=4):
+    for i in range(0, len(lst), chunk_size):
+        yield lst[i:i + chunk_size]
+        
+# ================== LOAD Model ==================
+clf = xgb.XGBClassifier()
+clf.load_model(current_dir / "Model" / "NG" / "Training" / "terrain_model.ubj")
+
+with open(current_dir /"Model"/"NG"/"Training"/ "preprocessor.pkl", "rb") as f:
     prep = pickle.load(f)
 
-with open(current_dir.parent/"json" / "model_meta.json") as f:
+with open(current_dir /"Model"/"NG"/ "json" / "model_meta.json") as f:
     meta = json.load(f)
 
-# check model_meta
+# ================== META ==================
 C = meta["constants"]
 FS = C["FS"]
 LOWPASS_CUTOFF = C["LOWPASS_CUTOFF"]
 FILTER_ORDER = C["FILTER_ORDER"]
 MIN_STRIDE = C["MIN_STRIDE_SAMPLES"]
 MAX_STRIDE = C["MAX_STRIDE_SAMPLES"]
-PURITY_THRESH = C["TERRAIN_PURITY_THRESH"]
 
 ALL_SENSORS = meta["all_sensors"]
 SIGNAL_COLUMNS = meta["signal_columns"]
@@ -34,44 +45,39 @@ FEAT_COLS = meta["feature_columns"]
 
 _b, _a = butter(FILTER_ORDER, LOWPASS_CUTOFF / (FS / 2.0), btype="low")
 
-
-# DONT CHANGE ANY SHIT HERE PLEASE
+# ================== HELPERS ==================
 def hampel_filter(x, half_window=5, sigma=3.0):
     x = x.copy().astype(float)
     for i in range(len(x)):
         lo, hi = max(0, i - half_window), min(len(x), i + half_window + 1)
-        w = x[lo:hi];
-        med = np.median(w);
+        w = x[lo:hi]
+        med = np.median(w)
         mad = np.median(np.abs(w - med))
         if mad > 0 and abs(x[i] - med) > sigma * 1.4826 * mad:
             x[i] = med
     return x
 
-
 def spectral_entropy(x):
-    p = np.abs(rfft(x - x.mean())) ** 2;
-    p = p[1:];
+    p = np.abs(rfft(x - x.mean())) ** 2
+    p = p[1:]
     total = p.sum()
     if total <= 0: return 0.0
-    p /= total;
+    p /= total
     return float(-(p * np.log(p + 1e-12)).sum())
 
-
 def dominant_freq(x):
-    centered = x - x.mean();
+    centered = x - x.mean()
     s = np.abs(rfft(centered))
     if len(s) <= 1: return 0.0
     return float(rfftfreq(len(centered), 1.0 / FS)[int(np.argmax(s[1:]) + 1)])
 
-
 def freq_band_energy(x, lo, hi):
-    centered = x - x.mean();
+    centered = x - x.mean()
     power = np.abs(rfft(centered)) ** 2
-    freqs = rfftfreq(len(centered), 1.0 / FS);
+    freqs = rfftfreq(len(centered), 1.0 / FS)
     total = power.sum()
     if total <= 0: return 0.0
     return float(power[(freqs >= lo) & (freqs < hi)].sum() / total)
-
 
 def summarize_signal(values, prefix):
     values = np.asarray(values, dtype=float)
@@ -105,7 +111,6 @@ def summarize_signal(values, prefix):
         f"{prefix}__band_5_20": freq_band_energy(values, 5.0, 20.0),
     }
 
-
 def load_sensor_csv(csv_path):
     df = pd.read_csv(csv_path)
     cont_cols = [c for c in SIGNAL_COLUMNS + OPTIONAL_COLS if c in df.columns]
@@ -129,7 +134,7 @@ def load_sensor_csv(csv_path):
     ]:
         if all(a in df.columns for a in axes):
             df[f"{prefix}_MAG"] = np.sqrt((df[list(axes)].to_numpy(dtype=float) ** 2).sum(axis=1))
-    return df
+    return df 
 
 
 def build_stride_features(sensor_frames, stride_idx):
@@ -147,60 +152,99 @@ def build_stride_features(sensor_frames, stride_idx):
             feats.update(summarize_signal(vals, key))
     return feats
 
+def match_terrain_With_unity(label: str) -> str:
+    mapping = {
+        "Flat": "Concrete",
+        "Slope ascent": "Stair Up",
+        "Slope descent": "Stair Down",
+        "Stair ascent": "Stairs",
+        "Stair descent": "Stairs",
+        "Grass": "Grass",   
+        "Gravel": "Sand",
+        "Uneven terrain": "Sand"
+    }
+    return mapping.get(label, label)    
 
-# inference function
-def predict_trial(sensor_csv_paths: dict) -> pd.DataFrame:
-    """
-    returns
-    pd.DataFrame  with one row per stride wl cols ely gaya dy:
-        step_id, stride_duration_s, predicted_label (terrain name y3ni)
-    """
-    frames = {s: load_sensor_csv(Path(p)) for s, p in sensor_csv_paths.items()}
+# ================== STREAM FUNCTION ==================
+def predict_and_stream(paths, client):
+    frames = {s: load_sensor_csv(Path(p)) for s, p in paths.items()}
     min_len = min(len(df) for df in frames.values())
     frames = {s: df.iloc[:min_len].reset_index(drop=True) for s, df in frames.items()}
 
-    ref = frames["PS"].copy()
+    ref = frames["PS"]
     ref["Steps"] = pd.to_numeric(ref["Steps"], errors="coerce")
 
-    valid_ref = ref.loc[ref["Steps"].notna() & (ref["Steps"] > 0)]
-    results = []
+    valid = ref.loc[ref["Steps"].notna() & (ref["Steps"] > 0)]
 
-    for step_id, g in valid_ref.groupby("Steps", sort=True):
+    id_to_label = {int(k): v for k, v in meta["label_encoder"].items()}
+    sorted_ids = sorted(id_to_label.keys())
+
+    for step_id, g in valid.groupby("Steps"):
         idx = g.index.to_numpy(dtype=int)
-        
+        actual_id = int(g["Terrain"].iloc[0])
+        actual_label = id_to_label.get(actual_id, "UNKNOWN") # as it's consistent along all steps
+        actual_label_unity = match_terrain_With_unity(actual_label)
         if not (MIN_STRIDE <= len(idx) <= MAX_STRIDE):
             continue
 
         feats = build_stride_features(frames, idx)
         row = pd.DataFrame([feats])[FEAT_COLS]
+
         X = prep.transform(row)
         enc = int(clf.predict(X)[0])
-        id_to_label = {int(k): v for k, v in meta["label_encoder"].items()}
-        sorted_ids = sorted(id_to_label.keys())
 
         label = id_to_label.get(sorted_ids[enc], "UNKNOWN")
+        unity_label = match_terrain_With_unity(label)
         proba = clf.predict_proba(X)[0]
 
-        results.append({
-            "step_id": int(step_id),
-            "stride_duration_s": feats["stride_duration_s"],
-            "predicted_label": label,
-            "confidence": float(proba[enc]),
-        })
+        message = {
+            "predicted": str(unity_label),
+            "actual": str(actual_label_unity),
+            "confidence": float(proba[enc])
+        }
 
-    return pd.DataFrame(results)
+        client.sendall((json.dumps(message) + "\n").encode())
+        print("Sent:", message)
 
+        time.sleep(feats["stride_duration_s"])  # simulate real-time
 
+# ================= STREAM LOOP ===================        
+def run_stream_loop():
+    print("Starting stream... Press Q to stop")
+
+    while True:
+        for batch in chunk_list(all_files, 4):
+
+            # check stop key
+            if msvcrt.kbhit():
+                key = msvcrt.getch().decode("utf-8").lower()
+                if key == 'q':
+                    print("Stopping loop...")
+                    return
+
+            # build paths dict dynamically
+            paths = {
+                "PS": batch[0],
+                "TH": batch[1] if len(batch) > 1 else batch[0],
+                "TR": batch[2] if len(batch) > 2 else batch[0],
+                "OS": batch[3] if len(batch) > 3 else batch[0],
+            }
+
+            print("Processing batch:", [p.name for p in batch])
+
+            predict_and_stream(paths, client)
+
+# ================== MAIN SERVER ==================
 if __name__ == "__main__":
-    paths = {
-        "PS": current_dir.parent.parent.parent / "dataverse_files" / "P3" / "CSwi01PS.csv",
-        "TH": current_dir.parent.parent.parent / "dataverse_files" / "P3" / "CSwi01TH.csv",
-        "TR": current_dir.parent.parent.parent / "dataverse_files" / "P3" / "CSwi01TR.csv",
-        "OS": current_dir.parent.parent.parent / "dataverse_files" / "P3" / "CSwi01OS.csv"
-    }
-    
-    df_results = predict_trial(paths)
-    print(df_results)
-    # inshallah yetla3 sa7 
-    # step_id  stride_duration_s  predicted_label  confidence
-    #       1               0.92             Flat        0.97
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("0.0.0.0", 5050))
+    server.listen(1)
+
+    print("Waiting for Unity...")
+    client, addr = server.accept()
+    print("Connected:", addr)
+
+    run_stream_loop()
+
+    client.close()
+    server.close()  
