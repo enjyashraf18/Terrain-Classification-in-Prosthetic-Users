@@ -35,11 +35,4 @@ TERRAIN_LABELS = {
 }
 ```
 
-1- fl training, we merged stairs (ascent and descent)
-
-2- Unity only have concrete / sand / grass / stairs
-
-so my guess is issss 
-1. flat is concrete
-2. sand is Uneven Terrain (gravel wouldnt be realistic sa7?)
  
