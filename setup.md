@@ -138,11 +138,12 @@ public class PredictionData
 ### Step 4: Add to Scene
 
 * Create an empty GameObject in Unity
-* Attach the `SocketClient` script to it
+* Attach the `SocketClient` script to it by choosing Add component in the Inspector Panel
 
 ---
 
 ## 🔄 4. Using the Data in Other Scripts
+to use the data in other scripts you need to paste this code in your files and you can access the data easily !
 
 ```csharp
 void OnEnable()
@@ -166,7 +167,7 @@ void HandlePrediction(PredictionData data)
 
 ## 🚀 5. Run Everything
 
-1. Start the Python server:
+1. Start the Python server: run this in terminal
 
 ```
 python app.py
