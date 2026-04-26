@@ -10,6 +10,12 @@ from scipy.signal import butter, filtfilt
 from scipy.stats import skew, kurtosis, iqr
 from scipy.fft import rfft, rfftfreq 
 from collections import Counter
+#============= state ===============
+terrain_state = {
+    "actual": None,
+    "send_count": 0,
+    "skip": False
+}
 # =========== Chunk Looping ======================
 current_dir = Path(__file__).parent
 data_folder = current_dir / "dataverse_files" / "P17"
@@ -183,39 +189,70 @@ def predict_and_stream(paths, client):
 
     buffer_preds = []
     buffer_confs = []
-    current_actual = None
+
+    # across patches
+    global terrain_state
+    if "terrain_state" not in globals():
+        terrain_state = {
+            "actual": None,
+            "send_count": 0,
+            "skip": False
+        }
 
     def flush_buffer():
         if not buffer_preds:
             return
 
-        # majority vote
         counts = Counter(buffer_preds)
         majority_label, _ = counts.most_common(1)[0]
 
-        # average confidence for majority class only
-        selected_confs = [c for p, c in zip(buffer_preds, buffer_confs) if p == majority_label]
+        selected_confs = [
+            c for p, c in zip(buffer_preds, buffer_confs)
+            if p == majority_label
+        ]
         avg_conf = float(np.mean(selected_confs)) if selected_confs else 0.0
 
         message = {
             "predicted": str(majority_label),
-            "actual": str(current_actual),
+            "actual": str(terrain_state["actual"]),
             "confidence": avg_conf
         }
 
         client.sendall((json.dumps(message) + "\n").encode())
-        print("Sent (aggregated):", message)
+        print("Sent:", message)
 
-
+    # ================= main loop of steps  =================
     for step_id, g in valid.groupby("Steps"):
         idx = g.index.to_numpy(dtype=int)
+
         actual_id = int(g["Terrain"].iloc[0])
         actual_label = id_to_label.get(actual_id, "UNKNOWN")
         actual_label_unity = match_terrain_With_unity(actual_label)
 
+        # ===== init =====
+        if terrain_state["actual"] is None:
+            terrain_state["actual"] = actual_label_unity
+
+        # ===== terrain change =====
+        if actual_label_unity != terrain_state["actual"]:
+            flush_buffer()
+
+            buffer_preds.clear()
+            buffer_confs.clear()
+
+            terrain_state["actual"] = actual_label_unity
+            terrain_state["send_count"] = 0
+            terrain_state["skip"] = False
+
+        # ===== skip inference completely =====
+        if terrain_state["skip"]:
+            continue
+
+        # ===== stride validity =====
         if not (MIN_STRIDE <= len(idx) <= MAX_STRIDE):
             continue
 
+        # ===== inference =====
         feats = build_stride_features(frames, idx)
         row = pd.DataFrame([feats])[FEAT_COLS]
 
@@ -224,65 +261,29 @@ def predict_and_stream(paths, client):
 
         label = id_to_label.get(sorted_ids[enc], "UNKNOWN")
         unity_label = match_terrain_With_unity(label)
+
         proba = clf.predict_proba(X)[0]
         conf = float(proba[enc])
 
-        # ================= new logic for accumlating 15 stride =================
-
-        # first entry
-        if current_actual is None:
-            current_actual = actual_label_unity
-
-        # if actual changed → flush early
-        if actual_label_unity != current_actual:
-            flush_buffer()
-            buffer_preds.clear()
-            buffer_confs.clear()
-            current_actual = actual_label_unity
-
-        # accumulate
+        # ===== buffer =====
         buffer_preds.append(unity_label)
         buffer_confs.append(conf)
 
-        # if reached 15 → flush
-        if len(buffer_preds) == 15:
+        # ===== send every 3 strides =====
+        if len(buffer_preds) == 3:
             flush_buffer()
+
             buffer_preds.clear()
             buffer_confs.clear()
 
-        # ============================================
+            terrain_state["send_count"] += 1
+
+            # after 2 sends → lock (skip mode)
+            if terrain_state["send_count"] >= 2:
+                terrain_state["skip"] = True
+                print(f"[INFO] Skip mode activated for terrain: {terrain_state['actual']}")
 
         time.sleep(feats["stride_duration_s"])
-
-    # for step_id, g in valid.groupby("Steps"):
-    #     idx = g.index.to_numpy(dtype=int)
-    #     actual_id = int(g["Terrain"].iloc[0])
-    #     actual_label = id_to_label.get(actual_id, "UNKNOWN") # as it's consistent along all steps
-    #     actual_label_unity = match_terrain_With_unity(actual_label)
-    #     if not (MIN_STRIDE <= len(idx) <= MAX_STRIDE):
-    #         continue
-
-    #     feats = build_stride_features(frames, idx)
-    #     row = pd.DataFrame([feats])[FEAT_COLS]
-
-    #     X = prep.transform(row)
-    #     enc = int(clf.predict(X)[0])
-
-    #     label = id_to_label.get(sorted_ids[enc], "UNKNOWN")
-    #     unity_label = match_terrain_With_unity(label)
-    #     proba = clf.predict_proba(X)[0]
-
-    #     message = {
-    #         "predicted": str(unity_label),
-    #         "actual": str(actual_label_unity),
-    #         "confidence": float(proba[enc])
-    #     }
-
-    #     client.sendall((json.dumps(message) + "\n").encode())
-    #     print("Sent:", message)
-
-    #     time.sleep(feats["stride_duration_s"])  # simulate real-time
-
 # ================= STREAM LOOP ===================        
 def run_stream_loop():
     print("Starting stream... Press Q to stop")
