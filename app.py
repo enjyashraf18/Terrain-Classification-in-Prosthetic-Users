@@ -9,10 +9,10 @@ import pickle, json, socket, time
 from scipy.signal import butter, filtfilt
 from scipy.stats import skew, kurtosis, iqr
 from scipy.fft import rfft, rfftfreq 
-
+from collections import Counter
 # =========== Chunk Looping ======================
 current_dir = Path(__file__).parent
-data_folder = current_dir / "dataverse_files" / "P3"
+data_folder = current_dir / "dataverse_files" / "P17"
 all_files = sorted(list(data_folder.glob("*.csv")))
 
 def chunk_list(lst, chunk_size=4):
@@ -154,16 +154,18 @@ def build_stride_features(sensor_frames, stride_idx):
 
 def match_terrain_With_unity(label: str) -> str:
     mapping = {
-        "Flat": "Concrete",
-        "Slope ascent": "Stair Up",
-        "Slope descent": "Stair Down",
-        "Stair ascent": "Stairs",
-        "Stair descent": "Stairs",
-        "Grass": "Grass",   
-        "Gravel": "Sand",
-        "Uneven terrain": "Sand"
+        "flat": "Concrete",
+        "slope ascent": "Stair Up",
+        "slope descent": "Stair Down",
+        "stair ascent": "Stairs",
+        "stair descent": "Stairs",
+        "grass": "Grass",   
+        "gravel": "Sand",
+        "uneven terrain": "Sand"
     }
-    return mapping.get(label, label)    
+
+    normalized = label.strip().lower()
+    return mapping.get(normalized, label)
 
 # ================== STREAM FUNCTION ==================
 def predict_and_stream(paths, client):
@@ -179,11 +181,38 @@ def predict_and_stream(paths, client):
     id_to_label = {int(k): v for k, v in meta["label_encoder"].items()}
     sorted_ids = sorted(id_to_label.keys())
 
+    buffer_preds = []
+    buffer_confs = []
+    current_actual = None
+
+    def flush_buffer():
+        if not buffer_preds:
+            return
+
+        # majority vote
+        counts = Counter(buffer_preds)
+        majority_label, _ = counts.most_common(1)[0]
+
+        # average confidence for majority class only
+        selected_confs = [c for p, c in zip(buffer_preds, buffer_confs) if p == majority_label]
+        avg_conf = float(np.mean(selected_confs)) if selected_confs else 0.0
+
+        message = {
+            "predicted": str(majority_label),
+            "actual": str(current_actual),
+            "confidence": avg_conf
+        }
+
+        client.sendall((json.dumps(message) + "\n").encode())
+        print("Sent (aggregated):", message)
+
+
     for step_id, g in valid.groupby("Steps"):
         idx = g.index.to_numpy(dtype=int)
         actual_id = int(g["Terrain"].iloc[0])
-        actual_label = id_to_label.get(actual_id, "UNKNOWN") # as it's consistent along all steps
+        actual_label = id_to_label.get(actual_id, "UNKNOWN")
         actual_label_unity = match_terrain_With_unity(actual_label)
+
         if not (MIN_STRIDE <= len(idx) <= MAX_STRIDE):
             continue
 
@@ -196,17 +225,63 @@ def predict_and_stream(paths, client):
         label = id_to_label.get(sorted_ids[enc], "UNKNOWN")
         unity_label = match_terrain_With_unity(label)
         proba = clf.predict_proba(X)[0]
+        conf = float(proba[enc])
 
-        message = {
-            "predicted": str(unity_label),
-            "actual": str(actual_label_unity),
-            "confidence": float(proba[enc])
-        }
+        # ================= new logic for accumlating 15 stride =================
 
-        client.sendall((json.dumps(message) + "\n").encode())
-        print("Sent:", message)
+        # first entry
+        if current_actual is None:
+            current_actual = actual_label_unity
 
-        time.sleep(feats["stride_duration_s"])  # simulate real-time
+        # if actual changed → flush early
+        if actual_label_unity != current_actual:
+            flush_buffer()
+            buffer_preds.clear()
+            buffer_confs.clear()
+            current_actual = actual_label_unity
+
+        # accumulate
+        buffer_preds.append(unity_label)
+        buffer_confs.append(conf)
+
+        # if reached 15 → flush
+        if len(buffer_preds) == 15:
+            flush_buffer()
+            buffer_preds.clear()
+            buffer_confs.clear()
+
+        # ============================================
+
+        time.sleep(feats["stride_duration_s"])
+
+    # for step_id, g in valid.groupby("Steps"):
+    #     idx = g.index.to_numpy(dtype=int)
+    #     actual_id = int(g["Terrain"].iloc[0])
+    #     actual_label = id_to_label.get(actual_id, "UNKNOWN") # as it's consistent along all steps
+    #     actual_label_unity = match_terrain_With_unity(actual_label)
+    #     if not (MIN_STRIDE <= len(idx) <= MAX_STRIDE):
+    #         continue
+
+    #     feats = build_stride_features(frames, idx)
+    #     row = pd.DataFrame([feats])[FEAT_COLS]
+
+    #     X = prep.transform(row)
+    #     enc = int(clf.predict(X)[0])
+
+    #     label = id_to_label.get(sorted_ids[enc], "UNKNOWN")
+    #     unity_label = match_terrain_With_unity(label)
+    #     proba = clf.predict_proba(X)[0]
+
+    #     message = {
+    #         "predicted": str(unity_label),
+    #         "actual": str(actual_label_unity),
+    #         "confidence": float(proba[enc])
+    #     }
+
+    #     client.sendall((json.dumps(message) + "\n").encode())
+    #     print("Sent:", message)
+
+    #     time.sleep(feats["stride_duration_s"])  # simulate real-time
 
 # ================= STREAM LOOP ===================        
 def run_stream_loop():
