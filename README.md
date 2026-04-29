@@ -1,5 +1,7 @@
 # Terrain-Classification-in-Prosthetic-Users
 ---
+## Demo :
+https://github.com/user-attachments/assets/16ab9bd1-cb81-47be-8115-adfec7e14732
 
 ## 📦 1. Download Dataset
 
